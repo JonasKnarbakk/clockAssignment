@@ -53,7 +53,7 @@ void setup(void) {
     screen.fillScreen(ST7735_BLACK);
 
     // Initialize timer variables
-    setTime(11, 4, 55, 11, 4, 2017);
+    setTime(22, 4, 55, 11, 4, 2017);
     timer = now();
     lastSecond = second(timer);
     lastMinute = minute(timer);
@@ -66,7 +66,10 @@ void setup(void) {
 
     // Set the alarm
     alarm = true;
-    setAlarm(11, 4, 11, 5);
+    setAlarm(11, 4, 22, 5);
+
+    Serial.print("Hour value: ");
+    Serial.println(hour(timer));
 }
 
 void loop() {
