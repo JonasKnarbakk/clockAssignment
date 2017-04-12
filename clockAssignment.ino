@@ -90,18 +90,18 @@ void loop() {
 
     timer = now();
     currentSecond = second(timer);
+    
+    // Handle alarm
+    if(checkAlarm()){
+        alarmActivated = true;
+    }
+    // Handle remote control
+    if(irrecv.decode(&results)){
+        translateIR();
+        irrecv.resume(); // Recieve the next value
+    }
+
     if(currentSecond != lastSecond){
-    Serial.print("Hour: ");
-    Serial.println(hour(timer));
-    Serial.print("Minute: ");
-    Serial.println(minute(timer));
-    Serial.print("Second: ");
-    Serial.println(second(timer));
-    Serial.print("Alarm: ");
-    Serial.print(alarmHour);
-    Serial.print(":");
-    Serial.println(alarmMinute);
-    Serial.println();
         if(alarmActivated){
             drawActivatedAlarm();
         } else{
@@ -113,14 +113,11 @@ void loop() {
         }
         lastSecond = currentSecond;
     }
-    // Handle alarm
-    if(checkAlarm()){
-        alarmActivated = true;
+    if(lastMinute != minute(timer)){
+        lastMinute = minute(timer);
     }
-    // Handle remote control
-    if(irrecv.decode(&results)){
-        translateIR();
-        irrecv.resume(); // Recieve the next value
+    if(lastHour != hour(timer)){
+        lastHour = hour(timer);
     }
 }
 
@@ -189,6 +186,7 @@ void drawDigitalClock(time_t &timer){
 }
 
 void drawAnalogClock(time_t &timer){
+    cleanUpLines();
     drawDate(screen.width()/2, 100);
     if(alarm){
         drawAlarm(screen.width()/2, 55);
@@ -226,10 +224,6 @@ void drawWatchFace(int width, int height, int radius){
 }
 
 void drawWatchIndicators(int width, int height, int radius, int hours, int minutes, int seconds){
-
-    // Cover the previes indicator lines with black
-    cleanUpLines(hours, minutes);
-
     // Draw the hand that indicates seconds
     drawHand(width/2, height/2, (seconds*6), 50, 0);
     
@@ -238,12 +232,15 @@ void drawWatchIndicators(int width, int height, int radius, int hours, int minut
 
     // Draw the hand that indicates hours
     drawHand(width/2, height/2, (hours*30), 30, 2);
-
-    lastMinute = minutes;
-    lastHour = hours;
 }
 
 void drawHand(int x, int y, float angle, int lenght, int index){
+    // Move the hour hand like you
+    // would expect of an analog clock
+    if(index == 2){
+        angle += (minute(timer)*6)/12;
+    }
+    
     angle = (angle * 3.14159265359 / 180); // Convert degrees to radians
     int xDestination = (x+(sin(angle)*lenght));
     int yDestination = (y-(cos(angle)*lenght));
@@ -260,7 +257,7 @@ void drawHand(int x, int y, float angle, int lenght, int index){
     drawnLines[index].angle = angle;
 }
 
-void cleanUpLines(int hours, int minutes){
+void cleanUpLines(){
     // Clear the seconds hand
     if((drawnLines[0].angle < 0.01f) || (drawnLines[0].angle > 4.71f && drawnLines[0].angle < 4.72f)){
         screen.drawLine(drawnLines[0].xDestination, drawnLines[0].yDestination, drawnLines[0].x, drawnLines[0].y, ST7735_BLACK);
@@ -269,7 +266,7 @@ void cleanUpLines(int hours, int minutes){
     }
 
     // Clear the minute hand
-    if(lastMinute != minutes){
+    if(lastMinute != minute(timer)){
         if(drawnLines[1].angle == 0 || (drawnLines[1].angle > 4.71f && drawnLines[1].angle < 4.72f)){
             screen.drawLine(drawnLines[1].xDestination, drawnLines[1].yDestination, drawnLines[1].x, drawnLines[1].y, ST7735_BLACK);
         } else {
@@ -278,7 +275,7 @@ void cleanUpLines(int hours, int minutes){
     }
 
     // Clear the hour hand
-    if(lastHour != hours){
+    if(lastMinute != minute(timer)){
         if(drawnLines[2].angle == 0 || (drawnLines[2].angle > 4.71f && drawnLines[2].angle < 4.72f)){
             screen.drawLine(drawnLines[2].xDestination, drawnLines[2].yDestination, drawnLines[2].x, drawnLines[2].y, ST7735_BLACK);
         } else {
@@ -400,7 +397,7 @@ void drawActivatedAlarm(){
     }
 
     // After 45 seconds we we snooze the alarm for 5 minutes
-    if(currentSecond > 5){
+    if(currentSecond > 30){
         snoozeAlarm(5);
         screen.fillScreen(ST7735_BLACK);
     }
@@ -415,6 +412,7 @@ void setAlarm(int day, int month, int hour, int minute){
 
 void snoozeAlarm(int timeMinutes){
     alarmActivated = false;
+    screenCleared = false;
     alarmMinute += timeMinutes;
     if(alarmMinute > 59){
         alarmHour++;
@@ -457,16 +455,28 @@ void translateIR() // takes action based on IR code received describing Car MP3 
         break;
     case 0xFF02FD:
         Serial.println(" >>|        ");
-        snoozeAlarm(1);
-        screen.fillScreen(ST7735_BLACK);
+        if(alarmActivated){
+            snoozeAlarm(1);
+            screen.fillScreen(ST7735_BLACK);
+        }
         break;
     case 0xFFC23D:
         Serial.println(" PLAY/PAUSE     ");
         if(alarm){
             alarm = false;
             screen.fillRect(20, 45, 80, 20, ST7735_BLACK);
+            if(analog){
+                drawAnalogClock(timer);
+            } else {
+                drawDigitalClock(timer);
+            }
         } else {
             alarm = true;
+            if(analog){
+                drawAnalogClock(timer);
+            } else {
+                drawDigitalClock(timer);
+            }
         }
         Serial.print("Alarm is now: ");
         Serial.println(alarm);
@@ -482,9 +492,11 @@ void translateIR() // takes action based on IR code received describing Car MP3 
         if(analog){
             analog = false;
             screen.fillScreen(ST7735_BLACK);
+            drawDigitalClock(timer);
         } else {
             analog = true;
             screen.fillScreen(ST7735_BLACK);
+            drawAnalogClock(timer);
         }
         break;
     case 0xFF6897:
