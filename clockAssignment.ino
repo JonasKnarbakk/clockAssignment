@@ -2,6 +2,7 @@
 #include <Adafruit_ST7735.h>
 #include <SPI.h>
 #include <Time.h>
+#include <IRremote.h>
 
 #define TFT_SCLK 13
 #define TFT_MOSI 11
@@ -9,12 +10,16 @@
 #define TFT_RST 8
 #define TFT_DC 9
 
+#define SPEAKER_PIN 5
+#define IR_PIN 4
+
 Adafruit_ST7735 screen = Adafruit_ST7735(TFT_CS,  TFT_DC, TFT_RST);
+IRrecv irrecv(IR_PIN);
+decode_results results;
 
 bool analog = true,
     alarm = true,
     alarmActivated = false,
-    alarmSnooze = false,
     screenCleared = false;
 
 time_t timer;
@@ -47,13 +52,20 @@ drawnLine drawnLines[3];
 void setup(void) {
     Serial.begin(9600);
 
+    pinMode(SPEAKER_PIN, OUTPUT);
+    pinMode(IR_PIN, INPUT);
+    irrecv.enableIRIn(); // Start the IR Reciever
+
     // Use this initializer if you're using a 1.8" TFT
     screen.initR(INITR_BLACKTAB);   // initialize a ST7735S chip, black tab
+
+    // We rotate the screen so the bottom faces away from the arduino
+    screen.setRotation(90);
 
     screen.fillScreen(ST7735_BLACK);
 
     // Initialize timer variables
-    setTime(22, 4, 55, 11, 4, 2017);
+    setTime(23, 58, 55, 11, 4, 2017);
     timer = now();
     lastSecond = second(timer);
     lastMinute = minute(timer);
@@ -66,7 +78,7 @@ void setup(void) {
 
     // Set the alarm
     alarm = true;
-    setAlarm(11, 4, 22, 5);
+    setAlarm(11, 4, 23, 59);
 
     Serial.print("Hour value: ");
     Serial.println(hour(timer));
@@ -74,9 +86,22 @@ void setup(void) {
 
 void loop() {
     // Only redraw the screen each second
+
+
     timer = now();
     currentSecond = second(timer);
     if(currentSecond != lastSecond){
+    Serial.print("Hour: ");
+    Serial.println(hour(timer));
+    Serial.print("Minute: ");
+    Serial.println(minute(timer));
+    Serial.print("Second: ");
+    Serial.println(second(timer));
+    Serial.print("Alarm: ");
+    Serial.print(alarmHour);
+    Serial.print(":");
+    Serial.println(alarmMinute);
+    Serial.println();
         if(alarmActivated){
             drawActivatedAlarm();
         } else{
@@ -88,8 +113,14 @@ void loop() {
         }
         lastSecond = currentSecond;
     }
-    if(checkAlarm() && !alarmSnooze){
+    // Handle alarm
+    if(checkAlarm()){
         alarmActivated = true;
+    }
+    // Handle remote control
+    if(irrecv.decode(&results)){
+        translateIR();
+        irrecv.resume(); // Recieve the next value
     }
 }
 
@@ -260,11 +291,11 @@ void drawDate(int x, int y){
     int currentDay = weekday(timer);
 
     if(lastWeekday != currentDay){
-        screen.fillRect(x-25, y-5, 50, 10, ST7735_BLACK);
+        screen.fillRect(x-30, y-5, 60, 10, ST7735_BLACK);
         lastWeekday = currentDay;
     }
     if(lastDay != day(timer)){
-        screen.fillRect(x-25, y+5, 50, 10, ST7735_BLACK);
+        screen.fillRect(x-30, y+5, 60, 9, ST7735_BLACK);
         lastDay = day(timer);
     }
 
@@ -290,8 +321,38 @@ void drawDate(int x, int y){
         case 7:
             drawTextCentered(x, y, "Saturday", 1, ST7735_WHITE);
             break;
+    } 
+
+    char *dayText = calloc(3, sizeof(char));
+    char *monthText = calloc(3, sizeof(char));
+    char *yearText = calloc(5, sizeof(char));
+    char *displayText = calloc(11, sizeof(char));
+
+    char *seperator = "/";
+
+    itoa(day(timer), dayText, 10);
+    itoa(month(timer), monthText, 10);
+    itoa(year(timer), yearText, 10);
+
+    if(day(timer) < 10){
+        strcat(displayText, "0"); 
     }
-    drawTextCentered(x, y+10, "11/04/17", 1, ST7735_WHITE);
+    strcat(displayText, dayText);
+    strcat(displayText, seperator);
+    if(month(timer) < 10){
+        strcat(displayText, "0"); 
+    }
+    strcat(displayText, monthText);
+    strcat(displayText, seperator);
+    strcat(displayText, yearText);
+
+    drawTextCentered(x, y+10, displayText, 1, ST7735_WHITE);
+    
+    // Free allocated memory
+    free(dayText);
+    free(monthText);
+    free(yearText);
+    free(displayText);
 }
 
 void drawAlarm(int x, int y){
@@ -329,15 +390,18 @@ void drawActivatedAlarm(){
         screenCleared = true;
     }
     if((currentSecond % 2) == 0){
+        noTone(SPEAKER_PIN);
         drawTextCentered(screen.width()/2, screen.height()/2, "ALARM!", 3, ST7735_YELLOW);
+        tone(SPEAKER_PIN, 262, 1000);
     } else{
+        noTone(SPEAKER_PIN);
         drawTextCentered(screen.width()/2, screen.height()/2, "ALARM!", 3, ST7735_RED);
+        tone(SPEAKER_PIN, 330, 1000);
     }
 
-    // TODO: remove when deactivate button is installed
+    // After 45 seconds we we snooze the alarm for 5 minutes
     if(currentSecond > 5){
-        alarmSnooze = true;
-        alarmActivated = false;
+        snoozeAlarm(5);
         screen.fillScreen(ST7735_BLACK);
     }
 }
@@ -349,8 +413,21 @@ void setAlarm(int day, int month, int hour, int minute){
     alarmMinute = minute;
 }
 
+void snoozeAlarm(int timeMinutes){
+    alarmActivated = false;
+    alarmMinute += timeMinutes;
+    if(alarmMinute > 59){
+        alarmHour++;
+        alarmMinute -= 60;
+        if(alarmHour > 23){
+            alarmHour -= 24;
+            alarmDay++;
+        }
+    }
+}
+
 bool checkAlarm(){
-    return alarmDay == day(timer) && alarmMonth == month(timer) && alarmHour == hour(timer) && alarmMinute == minute(timer);
+    return alarm && (alarmDay == day(timer) && alarmMonth == month(timer) && alarmHour == hour(timer) && alarmMinute == minute(timer) && 0 == second(timer));
 }
 
 void drawTextCentered(int16_t x, int16_t y, const char *string, int8_t size,uint16_t color){
@@ -360,4 +437,95 @@ void drawTextCentered(int16_t x, int16_t y, const char *string, int8_t size,uint
         screen.setCursor(x - (strlen(string)*3*size), y-(4*size));
         screen.print(string);
     }
+}
+
+void translateIR() // takes action based on IR code received describing Car MP3 IR codes
+{
+
+    switch(results.value){
+    case 0xFFA25D:
+        Serial.println(" CH-            ");
+        break;
+    case 0xFF629D:
+        Serial.println(" CH             ");
+        break;
+    case 0xFFE21D:
+        Serial.println(" CH+            ");
+        break;
+    case 0xFF22DD:
+        Serial.println(" |<<          ");
+        break;
+    case 0xFF02FD:
+        Serial.println(" >>|        ");
+        snoozeAlarm(1);
+        screen.fillScreen(ST7735_BLACK);
+        break;
+    case 0xFFC23D:
+        Serial.println(" PLAY/PAUSE     ");
+        if(alarm){
+            alarm = false;
+            screen.fillRect(20, 45, 80, 20, ST7735_BLACK);
+        } else {
+            alarm = true;
+        }
+        Serial.print("Alarm is now: ");
+        Serial.println(alarm);
+        break;
+    case 0xFFE01F:
+        Serial.println(" VOL-           ");
+        break;
+    case 0xFFA857:
+        Serial.println(" VOL+           ");
+        break;
+    case 0xFF906F:
+        Serial.println(" EQ             ");
+        if(analog){
+            analog = false;
+            screen.fillScreen(ST7735_BLACK);
+        } else {
+            analog = true;
+            screen.fillScreen(ST7735_BLACK);
+        }
+        break;
+    case 0xFF6897:
+        Serial.println(" 0              ");
+        break;
+    case 0xFF9867:
+        Serial.println(" 100+           ");
+        break;
+    case 0xFFB04F:
+        Serial.println(" 200+           ");
+        break;
+    case 0xFF30CF:
+        Serial.println(" 1              ");
+        break;
+    case 0xFF18E7:
+        Serial.println(" 2              ");
+        break;
+    case 0xFF7A85:
+        Serial.println(" 3              ");
+        break;
+    case 0xFF10EF:
+        Serial.println(" 4              ");
+        break;
+    case 0xFF38C7:
+        Serial.println(" 5              ");
+        break;
+    case 0xFF5AA5:
+        Serial.println(" 6              ");
+        break;
+    case 0xFF42BD:
+        Serial.println(" 7              ");
+        break;
+    case 0xFF4AB5:
+        Serial.println(" 8              ");
+        break;
+    case 0xFF52AD:
+        Serial.println(" 9              ");
+        break;
+    default:
+        Serial.print(" unknown button   ");
+        Serial.println(results.value, HEX);
+    }
+    delay(500);
 }
