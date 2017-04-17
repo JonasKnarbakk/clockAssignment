@@ -35,7 +35,7 @@ void setup(void) {
     // We rotate the display so the bottom faces away from the arduino
     display.init();
     display.getScreen().setRotation(90);
-    display.setAnalog(true);
+    display.setAnalog();
     /* display.setTime(20, 30, 0, 16, 4, 2017); */
 
     // Set the alarm
@@ -144,9 +144,9 @@ void translateIR() // takes action based on IR code received describing Car MP3 
     case 0xFF906F:
         Serial.println(" EQ             ");
         if(display.isAnalog()){
-            display.setAnalog(false);
+            display.setDigital();
         } else {
-            display.setAnalog(true);
+            display.setAnalog();
         }
         display.redraw();
         break;
