@@ -1,5 +1,12 @@
 #include <IRremote.h>
 #include <ST7735_AD_ClockDisplay.h>
+#include <Wire.h>
+#include <RTClib.h>
+
+#if defined(ARDUINO_ARCH_SAMD)
+// for Zero, output on USB Serial console, remove line below if using programming port to program the Zero!
+   #define Serial SerialUSB
+#endif
 
 #define TFT_SCLK 13
 #define TFT_MOSI 11
@@ -14,18 +21,26 @@ ST7335_AD_ClockDisplay display = ST7335_AD_ClockDisplay(TFT_CS,  TFT_DC, TFT_RST
 IRrecv irrecv(IR_PIN);
 decode_results results;
 
-bool alarm,
-    alarmActivated = false;
+bool alarm = false,
+    alarmActivated = false,
+    setAlarmMode = false,
+    interval = false;
 
-// Timer variables to check if we need
-// to redraw a value
 int alarmDay = 0,
     alarmMonth = 0,
     alarmHour = 0,
-    alarmMinute = 0;
+    alarmMinute = 0,
+    alarmSetState = 0,
+    alarmSetOne = 0,
+    alarmSetTwo = 0,
+    alarmSetThree = 0,
+    alarmSetFour = 0;
+
+RTC_DS1307 rtc;
+DateTime dateTime;
 
 void setup(void) {
-    Serial.begin(9600);
+    Serial.begin(57600);
 
     pinMode(SPEAKER_PIN, OUTPUT);
     pinMode(IR_PIN, INPUT);
@@ -35,41 +50,102 @@ void setup(void) {
     // We rotate the display so the bottom faces away from the arduino
     display.init();
     display.getScreen().setRotation(90);
-    display.setAnalog(true);
-    /* display.setTime(20, 30, 0, 16, 4, 2017); */
+    display.setDigital();
+    /* display.setAnalog(); */
+
+    Wire.begin();
+    
+    if(!rtc.begin()){
+        Serial.println("Could not find RTC!");
+    } else {
+        if (!rtc.isrunning()) {
+            Serial.println("RTC is NOT running!");
+        }
+        // following line sets the RTC to the date & time this sketch was compiled
+        // uncomment it & upload to set the time, date and start run the RTC!
+        rtc.adjust(DateTime(__DATE__, __TIME__));
+        dateTime = rtc.now();
+        display.setTime(dateTime.hour(), dateTime.minute(), dateTime.second(), dateTime.day(), dateTime.month(), dateTime.year());
+    }
 
     // Set the alarm
-    /* alarm = true; */
-    /* setAlarm(11, 4, 23, 59); */
+    alarm = true;
+    setAlarm(23, 4, 17, 33);
+
+    /* setAlarmMode = true; */
 }
 
 void loop() {
-    // Update the timer
-    display.drawClock();
-    
-    // Handle alarm
-    if(checkAlarm()){
-        alarmActivated = true;
-    }
+    // Update time
+    dateTime = rtc.now();
+    display.setTime(dateTime.hour(), dateTime.minute(), dateTime.second(), dateTime.day(), dateTime.month(), dateTime.year());
+
     // Handle remote control
     if(irrecv.decode(&results)){
         translateIR();
         irrecv.resume(); // Recieve the next value
     }
+
+    if(setAlarmMode){
+        if((display.getCurrentSecond() % 2) == 0){
+            if(!interval){
+                display.drawSetAlarm(alarmSetOne, alarmSetTwo, alarmSetThree, alarmSetFour);
+                interval = true;
+            }
+        } else{
+            if(interval){
+                switch(alarmSetState){
+                    case 0:
+                        display.getScreen().fillRect(33, 70, 13, 20, ST7735_BLACK);
+                        break;
+                    case 1:
+                        display.getScreen().fillRect(44, 70, 13, 20, ST7735_BLACK);
+                        break;
+                    case 2:
+                        display.getScreen().fillRect(68, 70, 13, 20, ST7735_BLACK);
+                        break;
+                    case 3:
+                        display.getScreen().fillRect(81, 70, 13, 20, ST7735_BLACK);
+                        break;
+                }
+                interval = false;
+            }
+        }
+    } else {
+        // Redraw the clock
+        if(alarmActivated){
+            display.drawActivatedAlarm();
+            soundAlarm();
+        } else {
+            display.drawClock();
+        }
+        
+        // Handle alarm
+        if(checkAlarm()){
+            alarmActivated = true;
+        }
+    }
 }
 
+
 void soundAlarm(){
-    if((display.getCurrentSecond() % 2) == 0){
-        noTone(SPEAKER_PIN);
-        tone(SPEAKER_PIN, 262, 1000);
+    if((dateTime.second() % 2) == 0){
+        if(interval){
+            noTone(SPEAKER_PIN);
+            tone(SPEAKER_PIN, 262, 1000);
+            interval = false;
+        }
     } else{
-        noTone(SPEAKER_PIN);
-        tone(SPEAKER_PIN, 330, 1000);
+        if(!interval){
+            noTone(SPEAKER_PIN);
+            tone(SPEAKER_PIN, 330, 1000);
+            interval = true;
+        }
     }
 
     // After 45 seconds we we snooze the alarm for 5 minutes
     if(display.getCurrentSecond() > 30){
-        snoozeAlarm(5);
+        snoozeAlarm(2);
     }
 }
 
@@ -91,6 +167,8 @@ void snoozeAlarm(int timeMinutes){
             alarmDay++;
         }
     }
+    display.setAlarm(alarmHour, alarmMinute);
+    display.getScreen().fillScreen(ST7735_BLACK);
 }
 
 bool checkAlarm(){
@@ -106,89 +184,136 @@ void translateIR() // takes action based on IR code received describing Car MP3 
 {
 
     switch(results.value){
-    case 0xFFA25D:
-        Serial.println(" CH-            ");
-        break;
-    case 0xFF629D:
-        Serial.println(" CH             ");
-        display.incrementFgColor();
-        break;
-    case 0xFFE21D:
-        Serial.println(" CH+            ");
-        display.incrementBgColor();
-        break;
-    case 0xFF22DD:
-        Serial.println(" |<<          ");
-        display.hideDate();
-        break;
-    case 0xFF02FD:
-        Serial.println(" >>|        ");
-        display.showDate();
-        /* if(alarmActivated){ */
-            /* snoozeAlarm(1); */
-            /* display.redraw(); */
-        /* } */
-        break;
-    case 0xFFC23D:
-        Serial.println(" PLAY/PAUSE     ");
-        Serial.print("Alarm is now: ");
-        break;
-    case 0xFFE01F:
-        Serial.println(" VOL-           ");
-        display.hideAlarm();
-        break;
-    case 0xFFA857:
-        Serial.println(" VOL+           ");
-        display.showAlarm();
-        break;
-    case 0xFF906F:
-        Serial.println(" EQ             ");
-        if(display.isAnalog()){
-            display.setAnalog(false);
-        } else {
-            display.setAnalog(true);
-        }
-        display.redraw();
-        break;
-    case 0xFF6897:
-        Serial.println(" 0              ");
-        break;
-    case 0xFF9867:
-        Serial.println(" 100+           ");
-        break;
-    case 0xFFB04F:
-        Serial.println(" 200+           ");
-        break;
-    case 0xFF30CF:
-        Serial.println(" 1              ");
-        break;
-    case 0xFF18E7:
-        Serial.println(" 2              ");
-        break;
-    case 0xFF7A85:
-        Serial.println(" 3              ");
-        break;
-    case 0xFF10EF:
-        Serial.println(" 4              ");
-        break;
-    case 0xFF38C7:
-        Serial.println(" 5              ");
-        break;
-    case 0xFF5AA5:
-        Serial.println(" 6              ");
-        break;
-    case 0xFF42BD:
-        Serial.println(" 7              ");
-        break;
-    case 0xFF4AB5:
-        Serial.println(" 8              ");
-        break;
-    case 0xFF52AD:
-        Serial.println(" 9              ");
-        break;
-    default:
-        Serial.print(" unknown button   ");
-        Serial.println(results.value, HEX);
+        case 0xFFA25D:
+            Serial.println(" CH-            ");
+            break;
+        case 0xFF629D:
+            Serial.println(" CH             ");
+            display.incrementFgColor();
+            break;
+        case 0xFFE21D:
+            Serial.println(" CH+            ");
+            display.incrementBgColor();
+            break;
+        case 0xFF22DD:
+            Serial.println(" |<<          ");
+            display.hideAlarm();
+            alarm = false;
+            break;
+        case 0xFF02FD:
+            Serial.println(" >>|        ");
+            display.showAlarm();
+            alarm = true;
+            /* if(alarmActivated){ */
+                /* snoozeAlarm(1); */
+                /* display.redraw(); */
+            /* } */
+            break;
+        case 0xFFC23D:
+            Serial.println(" PLAY/PAUSE     ");
+            snoozeAlarm(5);
+            break;
+        case 0xFFE01F:
+            Serial.println(" VOL-           ");
+            display.hideDate();
+            break;
+        case 0xFFA857:
+            Serial.println(" VOL+           ");
+            display.showDate();
+            break;
+        case 0xFF906F:
+            Serial.println(" EQ             ");
+            if(display.isAnalog()){
+                display.setDigital();
+            } else {
+                display.setAnalog();
+            }
+            display.redraw();
+            break;
+        case 0xFF6897:
+            Serial.println(" 0              ");
+            setAlarmInput(0);
+            break;
+        case 0xFF9867:
+            Serial.println(" 100+           ");
+            setAlarmMode = true;
+            display.getScreen().fillScreen(ST7735_BLACK);
+            break;
+        case 0xFFB04F:
+            Serial.println(" 200+           ");
+            break;
+        case 0xFF30CF:
+            Serial.println(" 1              ");
+            setAlarmInput(1);
+            break;
+        case 0xFF18E7:
+            Serial.println(" 2              ");
+            setAlarmInput(2);
+            break;
+        case 0xFF7A85:
+            Serial.println(" 3              ");
+            setAlarmInput(3);
+            break;
+        case 0xFF10EF:
+            Serial.println(" 4              ");
+            setAlarmInput(4);
+            break;
+        case 0xFF38C7:
+            Serial.println(" 5              ");
+            setAlarmInput(5);
+            break;
+        case 0xFF5AA5:
+            Serial.println(" 6              ");
+            setAlarmInput(6);
+            break;
+        case 0xFF42BD:
+            Serial.println(" 7              ");
+            setAlarmInput(7);
+            break;
+        case 0xFF4AB5:
+            Serial.println(" 8              ");
+            setAlarmInput(8);
+            break;
+        case 0xFF52AD:
+            Serial.println(" 9              ");
+            setAlarmInput(9);
+            break;
+        default:
+            Serial.print(" unknown button   ");
+            Serial.println(results.value, HEX);
+            break;
     }
     delay(500);
+}
+
+void setAlarmInput(int value){
+    if(setAlarmMode){
+        switch(alarmSetState){
+            case 0:
+                display.getScreen().fillRect(33, 70, 13, 20, ST7735_BLACK);
+                alarmSetOne = value;
+                alarmSetState++;
+                break;
+            case 1:
+                display.getScreen().fillRect(44, 70, 13, 20, ST7735_BLACK);
+                alarmSetTwo = value;
+                alarmSetState++;
+                break;
+            case 2:
+                display.getScreen().fillRect(68, 70, 13, 20, ST7735_BLACK);
+                alarmSetThree = value;
+                alarmSetState++;
+                break;
+            case 3:
+                alarmSetFour = value;
+                Serial.print("Setting fourth value as");
+                Serial.println(alarmSetFour);
+                alarmSetState = 0;
+                setAlarmMode = false;
+                setAlarm(dateTime.day(), dateTime.month(), (alarmSetOne*10) + alarmSetTwo, (alarmSetThree*10) + alarmSetFour);
+                display.setAlarm((alarmSetOne*10) + alarmSetTwo, (alarmSetThree*10) + alarmSetFour);
+                display.getScreen().fillScreen(ST7735_BLACK);
+                break;
+        }
+    }
 }

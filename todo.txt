@@ -1,0 +1,5 @@
+Grønn pin A05
+Gul pin A04
+
+Rød V+
+Grå V-
